@@ -1,8 +1,12 @@
-fun( #{ "model_path":=ModelPath }=Vars, _Input, _From, To)->
+fun( #{ "model_tag":=ModelTag, "isDebug":=IsDebug }=Vars, _Input, _From, To)->
+
+    Request = ml_model_request_processing:request(Ts=To, Vars#{ "model_tag"=>ModelTag, "isDebug"=> IsDebug}),
     
-    Request = ml_model_request_processing:request(Ts=To, Vars#{ "model_path"=>ModelPath }),
-    
-    fp:log(info,"DEBUG ML: IoT Source request : ~p: ", [Request]),
+    case IsDebug of 
+        true-> fp:log(info,"DEBUG ML: Request out IoT biding for Model: ~p: ", [Request]);
+        _ -> ok
+    end, 
     
     Request
+    
 end.
