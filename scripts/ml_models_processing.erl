@@ -16,19 +16,25 @@
 -define(START_HOUR, 1).
 -define(MAX_COUNT, 3).
 
-on_event(_Event, _State)->
+on_event(_Event, State)->
 
     {_, {Hour, _, _}} = calendar:local_time(),
     
-    if Hour >= ?START_HOUR-> run();
-
-       Hour < ?START_HOUR -> restart_all(<<"SUCCESS">>);
+    if
+        is_number(State)->
+            if
+                State < ?START_HOUR, Hour >= ?START_HOUR->
+                    run(<<"STDBY">>);
+                State < (?START_HOUR - 1), Hour >= (?START_HOUR - 1)->
+                    restart_by_status(<<"SUCCESS">>);
+                true-> 
+                    ignore
+                end;
+        true->
+            ignore
+        end,
     
-    true-> ok
-
-    end,
-    
-    reset_model(),
+    restart_by_trigger(<<"QUEUED">>),
     
     ok.
 
@@ -50,19 +56,34 @@ run()->
         
     ok.
 
-reset_model()->
-    
-    TagControlList = fp_db:get([?PROJECT_DB],[<<".oid">>],{'AND',[
-    {<<".pattern">>,'=',?OID(<<"/root/.patterns/model_control">>)},
-    {<<"disabled">>,'=',false},
-    {<<".name">>,'LIKE',<<"config_">>},
-    {<<"reset">>,'=',true}]}),
-    
+restart_by_trigger(TaskStatus)->
+
+    TagList = fp_db:get([?PROJECT_DB],[<<".oid">>],{'AND',[
+        {<<".pattern">>,'=',?OID(<<"/root/.patterns/model_control">>)},
+        {<<"disabled">>,'=',false},
+        {<<".name">>,'LIKE',<<"config_">>},
+        {<<"reset">>,'=',true}]}),            
+
     [ begin
         
-        fp_db:edit_object(fp_db:open(ModelTag), #{ <<"task_status">>=><<"STDBY">>, <<"reset">>=>false, <<"triggered">>=>false, <<"task_id">>=>none, <<"counter">>=>0} )
+        fp_db:edit_object(fp_db:open(Tag,none), #{ <<"task_status">>=>TaskStatus, <<"reset">>=>false, <<"triggered">>=>false, <<"task_id">>=>none, <<"counter">>=>0} )
     
-    end || ModelTag<-TagControlList ],
+    end || Tag<-TagList ];
+        
+    ok.
+
+restart_by_status(TaskStatus) ->
+
+    % Query=fp_db:query(<<"get .oid from root where and( .pattern=$oid('/root/.patterns/model_control'), disabled=false, triggered=true)">>),
+    TagList = fp_db:get([?PROJECT_DB],[<<".oid">>],{'AND',[
+        {<<".pattern">>,'=',?OID(<<"/root/.patterns/model_control">>)},
+        {<<"disabled">>,'=',false},
+        {<<".name">>,'LIKE',<<"config_">>},
+        {<<"task_status">>,'=',TaskStatus}]}),
+        
+    [ begin 
+        fp_db:edit_object(fp_db:open(Tag,none), #{<<"task_id">>=> none,<<"task_status">>=> <<"STDBY">>,<<"triggered">>=> false,<<"reset">>=> false, <<"counter">>=>0})
+    end || Tag <- TagList ],
     
     ok.
 
@@ -144,22 +165,6 @@ find_models(TaskStatus)->
 
     % Query = fp_db:query(<<"get .oid from root where and(and(.pattern=$oid('/root/.patterns/model_control'), disabled=false, .name like 'config_', task_status=",_TaskStatus/binary,"), or(and(triggered=true, reset='",_Reset,"'), triggered=true))">>),
     Query.
-    
-    
-restart_all(TaskStatus) ->
-
-    % Query=fp_db:query(<<"get .oid from root where and( .pattern=$oid('/root/.patterns/model_control'), disabled=false, triggered=true)">>),
-    Query = fp_db:get([?PROJECT_DB],[<<".oid">>],{'AND',[
-        {<<".pattern">>,'=',?OID(<<"/root/.patterns/model_control">>)},
-        {<<"disabled">>,'=',false},
-        {<<".name">>,'LIKE',<<"config_">>},
-        {<<"task_status">>,'=',TaskStatus}]}),
-        
-    [ begin 
-        fp_db:edit_object(fp_db:open(ModelTag,none), #{<<"task_id">>=> none,<<"task_status">>=> <<"STDBY">>,<<"triggered">>=> false,<<"reset">>=> false})
-    end || ModelTag <- Query ],
-    
-    ok.
 
 next_ts(TS, Cycle) ->
     (TS div Cycle) * Cycle + Cycle.
@@ -192,10 +197,6 @@ request(Ts, TaskStatus)->
             
             ModelConfig = fp_lib:from_json(ModelConfig0),
             #{ <<"input_window">>:=InputWindow0, <<"granularity">>:=Granularity0 } = ModelConfig,
-        
-            % ?LOGINFO("request() ModelPath: ~p", [ModelPath]),
-            % ?LOGINFO("request() ModelTag: ~p", [ModelTag]),
-            % ?LOGINFO("request() TaskStatus: ~p", [TaskStatus]),
             
             case TaskStatus of
                 <<"QUEUED">>->
